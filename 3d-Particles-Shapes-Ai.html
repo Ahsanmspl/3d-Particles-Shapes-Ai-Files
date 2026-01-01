@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Magic Particles - Infinix Fixed</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        #ui { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; z-index: 100; }
+        button { background: #00ffcc22; border: 1px solid #00ffcc; color: #00ffcc; padding: 12px 18px; border-radius: 30px; font-weight: bold; }
+        #video-container { position: fixed; top: 10px; right: 10px; width: 120px; height: 90px; border: 2px solid #00ffcc; border-radius: 10px; overflow: hidden; transform: scaleX(-1); }
+        video { width: 100%; height: 100%; object-fit: cover; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <button onclick="setShape(0)">Follow</button>
+        <button onclick="setShape(1)">Heart</button>
+        <button onclick="setShape(2)">Saturn</button>
+    </div>
+    <div id="video-container"><video id="video-input" playsinline></video></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.152.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <script id="vShader" type="x-shader/x-vertex">
+        uniform float uTime;
+        uniform vec3 uHandPos;
+        uniform float uShape;
+        attribute float aSpeed;
+        varying vec3 vColor;
+
+        void main() {
+            vec3 pos = position;
+            vec3 target = uHandPos;
+
+            // Shape Logic
+            if (uShape == 1.0) { // Heart
+                float t = aSpeed * 6.28;
+                target += vec3(1.6*pow(sin(t),3.0), 1.3*cos(t)-0.5*cos(2.0*t)-0.2*cos(3.0*t)-0.1*cos(4.0*t), sin(t)*0.5) * 2.5;
+            } else if (uShape == 2.0) { // Saturn
+                float t = aSpeed * 6.28 + uTime * 0.5;
+                if(mod(aSpeed*10.0, 1.0) > 0.5) target += vec3(cos(t)*5.0, sin(t)*0.8, sin(t)*5.0);
+                else target += vec3(cos(t)*2.0, sin(t)*2.0, cos(aSpeed*3.14)*2.0);
+            }
+
+            // Continuous Attraction: Move towards target based on time
+            vec3 finalPos = mix(pos, target, 0.15); 
+            
+            vec4 mvPos = modelViewMatrix * vec4(finalPos, 1.0);
+            gl_PointSize = (25.0 / -mvPos.z);
+            gl_Position = projectionMatrix * mvPos;
+            vColor = vec3(0.1, 0.9, 1.0);
+        }
+    </script>
+
+    <script id="fShader" type="x-shader/x-fragment">
+        varying vec3 vColor;
+        void main() {
+            if (length(gl_PointCoord - vec2(0.5)) > 0.5) discard;
+            gl_FragColor = vec4(vColor, 0.8);
+        }
+    </script>
+
+    <script>
+        const videoElement = document.getElementById('video-input');
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio > 1 ? 2 : 1);
+        document.body.appendChild(renderer.domElement);
+        camera.position.z = 12;
+
+        // Particle System
+        const count = 6000; // Optimized for Helio G85
+        const geo = new THREE.BufferGeometry();
+        const posArr = new Float32Array(count * 3);
+        const speedArr = new Float32Array(count);
+        for(let i=0; i<count*3; i++) posArr[i] = (Math.random()-0.5)*30;
+        for(let i=0; i<count; i++) speedArr[i] = Math.random();
+        
+        geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+        geo.setAttribute('aSpeed', new THREE.BufferAttribute(speedArr, 1));
+
+        const mat = new THREE.ShaderMaterial({
+            uniforms: { uTime:{value:0}, uHandPos:{value:new THREE.Vector3(0,0,0)}, uShape:{value:0} },
+            vertexShader: document.getElementById('vShader').textContent,
+            fragmentShader: document.getElementById('fShader').textContent,
+            blending: THREE.AdditiveBlending, depthWrite: false, transparent: true
+        });
+
+        const points = new THREE.Points(geo, mat);
+        scene.add(points);
+
+        function setShape(id) { mat.uniforms.uShape.value = id; }
+
+        // Hand Tracking
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.6 });
+
+        hands.onResults((res) => {
+            if (res.multiHandLandmarks && res.multiHandLandmarks[0]) {
+                const tip = res.multiHandLandmarks[0][8];
+                // Mobile optimized coordinate mapping
+                const x = (tip.x - 0.5) * -18;
+                const y = (tip.y - 0.5) * -18;
+                mat.uniforms.uHandPos.value.lerp(new THREE.Vector3(x, y, 0), 0.3);
+            }
+        });
+
+        const cam = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 480, height: 360
+        });
+        cam.start();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            mat.uniforms.uTime.value += 0.05;
+            // Gravity effect: update buffer positions slightly
+            const attr = geo.attributes.position;
+            for(let i=0; i<count*3; i++) {
+                attr.array[i] += (mat.uniforms.uHandPos.value.getComponent(i%3) - attr.array[i]) * 0.05;
+            }
+            attr.needsUpdate = true;
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
