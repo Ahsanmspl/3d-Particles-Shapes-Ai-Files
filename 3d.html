@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Infinix Optimized Hand Particles</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; touch-action: none; }
+        canvas { display: block; }
+        #video-input { transform: scaleX(-1); position: fixed; bottom: 10px; right: 10px; width: 120px; height: 90px; border-radius: 8px; border: 2px solid #00ffcc; z-index: 10; }
+    </style>
+</head>
+<body>
+    <video id="video-input" autoplay playsinline></video>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.152.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <script>
+        const videoElement = document.getElementById('video-input');
+        
+        // 1. Scene Setup - Mobile Optimized
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Pixel ratio limit for performance
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+        camera.position.z = 8;
+
+        // 2. Optimized Particle Geometry
+        const count = 15000; // Optimized count for Helio G85
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(count * 3);
+        const velocities = new Float32Array(count * 3);
+
+        for(let i=0; i < count * 3; i++) {
+            positions[i] = (Math.random() - 0.5) * 15;
+            velocities[i] = (Math.random() - 0.5) * 0.02;
+        }
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+        const material = new THREE.PointsMaterial({
+            size: 0.06,
+            color: 0x00ffcc,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+        const points = new THREE.Points(geometry, material);
+        scene.add(points);
+
+        const targetPos = new THREE.Vector3(0, 0, 0);
+
+        // 3. MediaPipe Lite Setup (Best for Infinix Hot 12)
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 0, // 0 = Lite (Fastest for mobile)
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults((results) => {
+            if (results.multiHandLandmarks && results.multiHandLandmarks[0]) {
+                const landmark = results.multiHandLandmarks[0][8]; // Index Finger
+                // Coordinate transformation for Mobile Landscape/Portrait
+                targetPos.x = (landmark.x - 0.5) * -15; 
+                targetPos.y = (landmark.y - 0.5) * -15;
+            }
+        });
+
+        const cameraFeed = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 480, height: 360 // Lower resolution for faster processing
+        });
+        cameraFeed.start();
+
+        // 4. Animation Loop with Smoothing (Lerp)
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const posAttr = geometry.attributes.position;
+            for (let i = 0; i < count; i++) {
+                const ix = i * 3;
+                const iy = i * 3 + 1;
+
+                // Simple gravity towards finger
+                posAttr.array[ix] += (targetPos.x - posAttr.array[ix]) * 0.02 + velocities[ix];
+                posAttr.array[iy] += (targetPos.y - posAttr.array[iy]) * 0.02 + velocities[iy];
+            }
+            posAttr.needsUpdate = true;
+
+            points.rotation.z += 0.002;
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // Handle Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
